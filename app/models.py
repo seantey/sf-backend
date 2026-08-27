@@ -1,7 +1,8 @@
+import enum
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Integer, String, Text, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 
@@ -31,6 +32,10 @@ class Contact(Base):
 
     notes: Mapped[str | None] = mapped_column(Text)
 
+    addresses: Mapped[list["Address"]] = relationship(
+        back_populates="contact", cascade="all, delete-orphan", order_by="Address.id"
+    )
+
     # Profile picture stored inline as a base64 data URL. The database is
     # in-memory, so there is no file store to point at; the schema layer
     # bounds the size and checks the content.
@@ -53,3 +58,29 @@ class Contact(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"<Contact id={self.id} email={self.email!r}>"
+
+
+class AddressType(str, enum.Enum):
+    HOME = "Home"
+    WORK = "Work"
+    OTHER = "Other"
+
+
+class Address(Base):
+    """One postal address belonging to a contact. A contact may have many."""
+
+    __tablename__ = "addresses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    contact_id: Mapped[int] = mapped_column(
+        ForeignKey("contacts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    type: Mapped[AddressType] = mapped_column(Enum(AddressType), nullable=False)
+
+    street: Mapped[str | None] = mapped_column(String(300))
+    city: Mapped[str | None] = mapped_column(String(120))
+    state: Mapped[str | None] = mapped_column(String(120))
+    postal_code: Mapped[str | None] = mapped_column(String(20))
+    country: Mapped[str | None] = mapped_column(String(120))
+
+    contact: Mapped[Contact] = relationship(back_populates="addresses")

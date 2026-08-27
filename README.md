@@ -111,11 +111,17 @@ first_name, last_name, email, phone, company, job_title,
 address, city, state, postal_code, country, notes, photo
 ```
 
+`addresses` is an optional list (max 20) of typed postal addresses, each with a
+`type` of `Home`, `Work`, or `Other` plus optional `street`, `city`, `state`,
+`postal_code`, and `country`. `PUT` replaces the whole list; `PATCH` replaces it
+only when the key is present (`null` or `[]` clears it).
+
 `photo` is a profile picture as a base64 data URL (`data:image/png;base64,...`):
 PNG, JPEG, WebP, or GIF, at most 500KB decoded, and the bytes must match the
 declared type.
 
-Responses add `id`, `full_name`, `created_at`, and `updated_at` (UTC).
+Responses add `id`, `full_name`, `created_at`, and `updated_at` (UTC); each
+stored address also carries its own `id`.
 
 ### List query parameters
 

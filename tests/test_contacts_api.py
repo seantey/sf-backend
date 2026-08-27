@@ -1,4 +1,9 @@
 import base64
+import time
+
+from sqlalchemy import event
+
+from app.database import engine
 
 BASE = "/api/v1/contacts"
 
@@ -153,6 +158,86 @@ def test_delete_contact(client, payload):
 def test_root_lists_entrypoints(client):
     body = client.get("/").json()
     assert body["contacts"] == BASE
+
+
+HOME = {"type": "Home", "street": "1 Market St", "city": "San Francisco", "state": "CA", "postal_code": "94105", "country": "USA"}
+WORK = {"type": "Work", "street": "2 Embarcadero", "city": "San Francisco", "country": "USA"}
+
+
+def test_create_with_addresses_round_trips(client, payload):
+    response = client.post(BASE, json={**payload, "addresses": [HOME, WORK]})
+    assert response.status_code == 201
+    addresses = response.json()["addresses"]
+    assert [a["type"] for a in addresses] == ["Home", "Work"]
+    assert all(a["id"] > 0 for a in addresses)
+
+
+def test_addresses_default_to_empty(client, payload):
+    assert client.post(BASE, json=payload).json()["addresses"] == []
+
+
+def test_put_replaces_address_list(client, payload):
+    contact_id = client.post(BASE, json={**payload, "addresses": [HOME, WORK]}).json()["id"]
+    response = client.put(f"{BASE}/{contact_id}", json={**payload, "addresses": [{"type": "Other", "city": "Oakland"}]})
+    assert response.status_code == 200
+    assert [(a["type"], a["city"]) for a in response.json()["addresses"]] == [("Other", "Oakland")]
+
+
+def test_put_without_addresses_clears_them(client, payload):
+    contact_id = client.post(BASE, json={**payload, "addresses": [HOME]}).json()["id"]
+    assert client.put(f"{BASE}/{contact_id}", json=payload).json()["addresses"] == []
+
+
+def test_patch_leaves_addresses_alone_when_omitted(client, payload):
+    contact_id = client.post(BASE, json={**payload, "addresses": [HOME]}).json()["id"]
+    response = client.patch(f"{BASE}/{contact_id}", json={"phone": "+1-000-000-0000"})
+    assert len(response.json()["addresses"]) == 1
+
+
+def test_patch_null_addresses_clears_them(client, payload):
+    contact_id = client.post(BASE, json={**payload, "addresses": [HOME, WORK]}).json()["id"]
+    response = client.patch(f"{BASE}/{contact_id}", json={"addresses": None})
+    assert response.status_code == 200
+    assert response.json()["addresses"] == []
+
+
+def test_address_only_patch_bumps_updated_at(client, payload):
+    created = client.post(BASE, json=payload).json()
+    time.sleep(0.01)
+    updated = client.patch(f"{BASE}/{created['id']}", json={"addresses": [HOME]}).json()
+    assert updated["updated_at"] > created["updated_at"]
+
+
+def test_address_list_is_capped(client, payload):
+    too_many = [{"type": "Other", "city": f"City {index}"} for index in range(21)]
+    assert client.post(BASE, json={**payload, "addresses": too_many}).status_code == 422
+    contact_id = client.post(BASE, json=payload).json()["id"]
+    assert client.patch(f"{BASE}/{contact_id}", json={"addresses": too_many}).status_code == 422
+
+
+def test_list_loads_addresses_with_bounded_queries(client, payload):
+    for index in range(5):
+        client.post(BASE, json={**payload, "email": f"user{index}@example.com", "addresses": [HOME, WORK]})
+
+    statements: list[str] = []
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def _record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    try:
+        items = client.get(BASE, params={"limit": 200}).json()["items"]
+    finally:
+        event.remove(engine, "before_cursor_execute", _record)
+
+    assert all(len(item["addresses"]) == 2 for item in items)
+    # count + contacts page + one batched addresses load; not one per contact.
+    assert len([s for s in statements if s.lstrip().upper().startswith("SELECT")]) == 3
+
+
+def test_address_rejects_unknown_type(client, payload):
+    response = client.post(BASE, json={**payload, "addresses": [{"type": "Vacation"}]})
+    assert response.status_code == 422
 
 
 def test_create_with_photo_round_trips(client, payload):
