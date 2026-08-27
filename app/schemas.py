@@ -1,6 +1,56 @@
+import base64
+import binascii
+import re
 from datetime import datetime, timezone
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field, computed_field, field_validator
+
+PHOTO_MAX_BYTES = 500_000
+PHOTO_MEDIA_TYPES = ("image/png", "image/jpeg", "image/webp", "image/gif")
+
+# Base64 grows data by 4/3, so an encoded payload longer than this cannot fit
+# the decoded limit. Checked before decoding so an oversized upload is rejected
+# without allocating a second buffer for it.
+_PHOTO_MAX_ENCODED_LENGTH = -(-PHOTO_MAX_BYTES // 3) * 4
+
+_PHOTO_DATA_URL = re.compile(r"^data:(?P<media_type>image/[a-z]+);base64,(?P<payload>[A-Za-z0-9+/]+={0,2})$")
+
+# Leading bytes each format starts with, so the declared media type is checked
+# against the actual content rather than trusted.
+_IMAGE_SIGNATURES = {
+    "image/png": (b"\x89PNG\r\n\x1a\n",),
+    "image/jpeg": (b"\xff\xd8\xff",),
+    "image/gif": (b"GIF87a", b"GIF89a"),
+    "image/webp": (b"RIFF",),
+}
+
+
+def validate_photo_data_url(value: str) -> str:
+    match = _PHOTO_DATA_URL.match(value)
+    if match is None:
+        raise ValueError("photo must be a base64 data URL such as data:image/png;base64,...")
+    media_type = match["media_type"]
+    if media_type not in PHOTO_MEDIA_TYPES:
+        raise ValueError(f"photo must be one of: {', '.join(PHOTO_MEDIA_TYPES)}")
+    if len(match["payload"]) > _PHOTO_MAX_ENCODED_LENGTH:
+        raise ValueError(f"photo must be {PHOTO_MAX_BYTES // 1000}KB or smaller")
+    try:
+        content = base64.b64decode(match["payload"], validate=True)
+    except binascii.Error as exc:
+        raise ValueError("photo is not valid base64") from exc
+    if len(content) > PHOTO_MAX_BYTES:
+        raise ValueError(f"photo must be {PHOTO_MAX_BYTES // 1000}KB or smaller")
+    if not content.startswith(_IMAGE_SIGNATURES[media_type]) or (
+        media_type == "image/webp" and content[8:12] != b"WEBP"
+    ):
+        raise ValueError(f"photo content is not a {media_type} image")
+    return value
+
+
+PhotoDataUrl = Annotated[str, AfterValidator(validate_photo_data_url)]
+
+_TINY_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC"
 
 from app.models import AddressType
 
@@ -102,6 +152,15 @@ class ContactBase(BaseModel):
         ),
         examples=[[{"type": "Home", "street": "1 Market St, Suite 400", "city": "San Francisco", "state": "CA", "postal_code": "94105", "country": "USA"}]],
     )
+    photo: PhotoDataUrl | None = Field(
+        default=None,
+        description=(
+            "Profile picture as a base64 data URL (`data:image/png;base64,...`). "
+            f"PNG, JPEG, WebP, or GIF; at most {PHOTO_MAX_BYTES // 1000}KB decoded. "
+            "The content is checked against the declared type."
+        ),
+        examples=[_TINY_PNG],
+    )
 
 
 _FULL_EXAMPLE = {
@@ -174,6 +233,9 @@ class ContactUpdate(BaseModel):
             "New address list; replaces every existing address when present. "
             f"An explicit `null` clears the list. At most {MAX_ADDRESSES_PER_CONTACT} per contact."
         ),
+    )
+    photo: PhotoDataUrl | None = Field(
+        default=None, description="New profile picture as a base64 data URL. Send `null` to remove it."
     )
 
 

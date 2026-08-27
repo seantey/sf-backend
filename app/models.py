@@ -36,6 +36,11 @@ class Contact(Base):
         back_populates="contact", cascade="all, delete-orphan", order_by="Address.id"
     )
 
+    # Profile picture stored inline as a base64 data URL. The database is
+    # in-memory, so there is no file store to point at; the schema layer
+    # bounds the size and checks the content.
+    photo: Mapped[str | None] = mapped_column(Text)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, server_default=func.now(), nullable=False
     )
