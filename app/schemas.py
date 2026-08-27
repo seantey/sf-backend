@@ -5,6 +5,9 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field, fie
 from app.models import AddressType
 
 
+MAX_ADDRESSES_PER_CONTACT = 20
+
+
 class AddressBase(BaseModel):
     """One postal address, labelled by what it is for."""
 
@@ -92,7 +95,12 @@ class ContactBase(BaseModel):
     )
     addresses: list[AddressBase] = Field(
         default_factory=list,
-        description="Postal addresses, each typed Home, Work, or Other. PUT replaces the whole list.",
+        max_length=MAX_ADDRESSES_PER_CONTACT,
+        description=(
+            "Postal addresses, each typed Home, Work, or Other. PUT replaces the whole list. "
+            f"At most {MAX_ADDRESSES_PER_CONTACT} per contact."
+        ),
+        examples=[[{"type": "Home", "street": "1 Market St, Suite 400", "city": "San Francisco", "state": "CA", "postal_code": "94105", "country": "USA"}]],
     )
 
 
@@ -160,7 +168,12 @@ class ContactUpdate(BaseModel):
     country: str | None = Field(default=None, max_length=120, description="New country.")
     notes: str | None = Field(default=None, description="New notes; replaces the existing text.")
     addresses: list[AddressBase] | None = Field(
-        default=None, description="New address list; replaces every existing address when present."
+        default=None,
+        max_length=MAX_ADDRESSES_PER_CONTACT,
+        description=(
+            "New address list; replaces every existing address when present. "
+            f"An explicit `null` clears the list. At most {MAX_ADDRESSES_PER_CONTACT} per contact."
+        ),
     )
 
 

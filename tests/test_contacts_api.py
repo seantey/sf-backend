@@ -1,3 +1,9 @@
+import time
+
+from sqlalchemy import event
+
+from app.database import engine
+
 BASE = "/api/v1/contacts"
 
 
@@ -178,6 +184,47 @@ def test_patch_leaves_addresses_alone_when_omitted(client, payload):
     contact_id = client.post(BASE, json={**payload, "addresses": [HOME]}).json()["id"]
     response = client.patch(f"{BASE}/{contact_id}", json={"phone": "+1-000-000-0000"})
     assert len(response.json()["addresses"]) == 1
+
+
+def test_patch_null_addresses_clears_them(client, payload):
+    contact_id = client.post(BASE, json={**payload, "addresses": [HOME, WORK]}).json()["id"]
+    response = client.patch(f"{BASE}/{contact_id}", json={"addresses": None})
+    assert response.status_code == 200
+    assert response.json()["addresses"] == []
+
+
+def test_address_only_patch_bumps_updated_at(client, payload):
+    created = client.post(BASE, json=payload).json()
+    time.sleep(0.01)
+    updated = client.patch(f"{BASE}/{created['id']}", json={"addresses": [HOME]}).json()
+    assert updated["updated_at"] > created["updated_at"]
+
+
+def test_address_list_is_capped(client, payload):
+    too_many = [{"type": "Other", "city": f"City {index}"} for index in range(21)]
+    assert client.post(BASE, json={**payload, "addresses": too_many}).status_code == 422
+    contact_id = client.post(BASE, json=payload).json()["id"]
+    assert client.patch(f"{BASE}/{contact_id}", json={"addresses": too_many}).status_code == 422
+
+
+def test_list_loads_addresses_with_bounded_queries(client, payload):
+    for index in range(5):
+        client.post(BASE, json={**payload, "email": f"user{index}@example.com", "addresses": [HOME, WORK]})
+
+    statements: list[str] = []
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def _record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    try:
+        items = client.get(BASE, params={"limit": 200}).json()["items"]
+    finally:
+        event.remove(engine, "before_cursor_execute", _record)
+
+    assert all(len(item["addresses"]) == 2 for item in items)
+    # count + contacts page + one batched addresses load; not one per contact.
+    assert len([s for s in statements if s.lstrip().upper().startswith("SELECT")]) == 3
 
 
 def test_address_rejects_unknown_type(client, payload):

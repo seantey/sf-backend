@@ -1,7 +1,7 @@
 from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
-from app.models import Address, Contact
+from app.models import Address, Contact, _utcnow
 from app.schemas import ContactCreate, ContactReplace, ContactUpdate
 
 SORTABLE_FIELDS = ("id", "first_name", "last_name", "email", "company", "created_at", "updated_at")
@@ -55,6 +55,8 @@ def list_contacts(
     column = getattr(Contact, sort_by)
     stmt = stmt.order_by(column.desc() if order == "desc" else column.asc())
 
+    # Load every page's addresses in one extra query instead of one per contact.
+    stmt = stmt.options(selectinload(Contact.addresses))
     items = db.execute(stmt.limit(limit).offset(offset)).scalars().all()
     return list(items), total
 
@@ -78,7 +80,10 @@ def _assign(contact: Contact, field: str, value) -> None:
     if field == "email":
         value = _normalize_email(value)
     elif field == "addresses":
-        value = _addresses(value)
+        # Swapping child rows never touches a contacts column, so the column-level
+        # onupdate would not fire; stamp the parent explicitly.
+        value = _addresses(value or [])
+        contact.updated_at = _utcnow()
     setattr(contact, field, value)
 
 
@@ -91,9 +96,9 @@ def replace_contact(db: Session, contact: Contact, payload: ContactReplace) -> C
 
 
 def update_contact(db: Session, contact: Contact, payload: ContactUpdate) -> Contact:
+    # An explicit `"addresses": null` clears the list, matching how PATCH treats
+    # every other field; omitting the key leaves the stored addresses untouched.
     for field, value in payload.model_dump(exclude_unset=True).items():
-        if field == "addresses" and value is None:
-            continue
         _assign(contact, field, value)
     db.commit()
     db.refresh(contact)
