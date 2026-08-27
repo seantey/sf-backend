@@ -1,4 +1,13 @@
+import base64
+
 BASE = "/api/v1/contacts"
+
+PNG_HEADER = b"\x89PNG\r\n\x1a\n"
+JPEG_HEADER = b"\xff\xd8\xff"
+
+
+def photo_data_url(content: bytes = PNG_HEADER + b"\0" * 16, media_type: str = "image/png") -> str:
+    return f"data:{media_type};base64,{base64.b64encode(content).decode()}"
 
 
 def test_health(client):
@@ -144,3 +153,57 @@ def test_delete_contact(client, payload):
 def test_root_lists_entrypoints(client):
     body = client.get("/").json()
     assert body["contacts"] == BASE
+
+
+def test_create_with_photo_round_trips(client, payload):
+    photo = photo_data_url()
+    response = client.post(BASE, json={**payload, "photo": photo})
+    assert response.status_code == 201
+    assert response.json()["photo"] == photo
+    assert client.get(f"{BASE}/{response.json()['id']}").json()["photo"] == photo
+
+
+def test_photo_defaults_to_null(client, payload):
+    assert client.post(BASE, json=payload).json()["photo"] is None
+
+
+def test_put_without_photo_clears_it(client, payload):
+    contact_id = client.post(BASE, json={**payload, "photo": photo_data_url()}).json()["id"]
+    response = client.put(f"{BASE}/{contact_id}", json=payload)
+    assert response.status_code == 200
+    assert response.json()["photo"] is None
+
+
+def test_put_with_photo_keeps_it(client, payload):
+    photo = photo_data_url()
+    contact_id = client.post(BASE, json={**payload, "photo": photo}).json()["id"]
+    response = client.put(f"{BASE}/{contact_id}", json={**payload, "photo": photo})
+    assert response.json()["photo"] == photo
+
+
+def test_patch_photo_null_removes_it(client, payload):
+    contact_id = client.post(BASE, json={**payload, "photo": photo_data_url()}).json()["id"]
+    response = client.patch(f"{BASE}/{contact_id}", json={"photo": None})
+    assert response.status_code == 200
+    assert response.json()["photo"] is None
+
+
+def test_photo_rejects_non_image_media_type(client, payload):
+    response = client.post(BASE, json={**payload, "photo": photo_data_url(b"hello", "text/plain")})
+    assert response.status_code == 422
+
+
+def test_photo_rejects_content_that_does_not_match_type(client, payload):
+    response = client.post(BASE, json={**payload, "photo": photo_data_url(JPEG_HEADER + b"\0" * 16, "image/png")})
+    assert response.status_code == 422
+
+
+def test_photo_rejects_oversized_image(client, payload):
+    too_big = PNG_HEADER + b"\0" * 500_001
+    response = client.post(BASE, json={**payload, "photo": photo_data_url(too_big)})
+    assert response.status_code == 422
+
+
+def test_photo_rejects_plain_string(client, payload):
+    response = client.post(BASE, json={**payload, "photo": "not-a-data-url"})
+    assert response.status_code == 422
