@@ -108,8 +108,12 @@ also read):
 
 ```
 first_name, last_name, email, phone, company, job_title,
-address, city, state, postal_code, country, notes
+address, city, state, postal_code, country, notes, photo
 ```
+
+`photo` is a profile picture as a base64 data URL (`data:image/png;base64,...`):
+PNG, JPEG, WebP, or GIF, at most 500KB decoded, and the bytes must match the
+declared type.
 
 Responses add `id`, `full_name`, `created_at`, and `updated_at` (UTC).
 
