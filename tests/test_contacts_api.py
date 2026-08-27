@@ -204,6 +204,24 @@ def test_photo_rejects_oversized_image(client, payload):
     assert response.status_code == 422
 
 
+def test_photo_rejects_oversized_payload_before_decoding(client, payload, monkeypatch):
+    import base64 as b64
+
+    def fail_if_decoded(*_args, **_kwargs):
+        raise AssertionError("oversized payload should be rejected before decoding")
+
+    monkeypatch.setattr(b64, "b64decode", fail_if_decoded)
+    oversized = "data:image/png;base64," + "A" * 700_000
+    response = client.post(BASE, json={**payload, "photo": oversized})
+    assert response.status_code == 422
+
+
+def test_photo_at_exact_limit_is_accepted(client, payload):
+    exact = PNG_HEADER + b"\0" * (500_000 - len(PNG_HEADER))
+    response = client.post(BASE, json={**payload, "photo": photo_data_url(exact)})
+    assert response.status_code == 201
+
+
 def test_photo_rejects_plain_string(client, payload):
     response = client.post(BASE, json={**payload, "photo": "not-a-data-url"})
     assert response.status_code == 422

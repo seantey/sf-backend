@@ -9,6 +9,11 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field, com
 PHOTO_MAX_BYTES = 500_000
 PHOTO_MEDIA_TYPES = ("image/png", "image/jpeg", "image/webp", "image/gif")
 
+# Base64 grows data by 4/3, so an encoded payload longer than this cannot fit
+# the decoded limit. Checked before decoding so an oversized upload is rejected
+# without allocating a second buffer for it.
+_PHOTO_MAX_ENCODED_LENGTH = -(-PHOTO_MAX_BYTES // 3) * 4
+
 _PHOTO_DATA_URL = re.compile(r"^data:(?P<media_type>image/[a-z]+);base64,(?P<payload>[A-Za-z0-9+/]+={0,2})$")
 
 # Leading bytes each format starts with, so the declared media type is checked
@@ -28,6 +33,8 @@ def validate_photo_data_url(value: str) -> str:
     media_type = match["media_type"]
     if media_type not in PHOTO_MEDIA_TYPES:
         raise ValueError(f"photo must be one of: {', '.join(PHOTO_MEDIA_TYPES)}")
+    if len(match["payload"]) > _PHOTO_MAX_ENCODED_LENGTH:
+        raise ValueError(f"photo must be {PHOTO_MAX_BYTES // 1000}KB or smaller")
     try:
         content = base64.b64decode(match["payload"], validate=True)
     except binascii.Error as exc:
