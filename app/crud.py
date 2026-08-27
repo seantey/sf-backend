@@ -1,7 +1,7 @@
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.models import Contact
+from app.models import Address, Contact
 from app.schemas import ContactCreate, ContactReplace, ContactUpdate
 
 SORTABLE_FIELDS = ("id", "first_name", "last_name", "email", "company", "created_at", "updated_at")
@@ -59,9 +59,14 @@ def list_contacts(
     return list(items), total
 
 
+def _addresses(items: list[dict]) -> list[Address]:
+    return [Address(**item) for item in items]
+
+
 def create_contact(db: Session, payload: ContactCreate) -> Contact:
     data = payload.model_dump()
     data["email"] = _normalize_email(data["email"])
+    data["addresses"] = _addresses(data["addresses"])
     contact = Contact(**data)
     db.add(contact)
     db.commit()
@@ -69,9 +74,17 @@ def create_contact(db: Session, payload: ContactCreate) -> Contact:
     return contact
 
 
+def _assign(contact: Contact, field: str, value) -> None:
+    if field == "email":
+        value = _normalize_email(value)
+    elif field == "addresses":
+        value = _addresses(value)
+    setattr(contact, field, value)
+
+
 def replace_contact(db: Session, contact: Contact, payload: ContactReplace) -> Contact:
     for field, value in payload.model_dump().items():
-        setattr(contact, field, _normalize_email(value) if field == "email" else value)
+        _assign(contact, field, value)
     db.commit()
     db.refresh(contact)
     return contact
@@ -79,7 +92,9 @@ def replace_contact(db: Session, contact: Contact, payload: ContactReplace) -> C
 
 def update_contact(db: Session, contact: Contact, payload: ContactUpdate) -> Contact:
     for field, value in payload.model_dump(exclude_unset=True).items():
-        setattr(contact, field, _normalize_email(value) if field == "email" else value)
+        if field == "addresses" and value is None:
+            continue
+        _assign(contact, field, value)
     db.commit()
     db.refresh(contact)
     return contact

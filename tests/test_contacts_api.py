@@ -144,3 +144,42 @@ def test_delete_contact(client, payload):
 def test_root_lists_entrypoints(client):
     body = client.get("/").json()
     assert body["contacts"] == BASE
+
+
+HOME = {"type": "Home", "street": "1 Market St", "city": "San Francisco", "state": "CA", "postal_code": "94105", "country": "USA"}
+WORK = {"type": "Work", "street": "2 Embarcadero", "city": "San Francisco", "country": "USA"}
+
+
+def test_create_with_addresses_round_trips(client, payload):
+    response = client.post(BASE, json={**payload, "addresses": [HOME, WORK]})
+    assert response.status_code == 201
+    addresses = response.json()["addresses"]
+    assert [a["type"] for a in addresses] == ["Home", "Work"]
+    assert all(a["id"] > 0 for a in addresses)
+
+
+def test_addresses_default_to_empty(client, payload):
+    assert client.post(BASE, json=payload).json()["addresses"] == []
+
+
+def test_put_replaces_address_list(client, payload):
+    contact_id = client.post(BASE, json={**payload, "addresses": [HOME, WORK]}).json()["id"]
+    response = client.put(f"{BASE}/{contact_id}", json={**payload, "addresses": [{"type": "Other", "city": "Oakland"}]})
+    assert response.status_code == 200
+    assert [(a["type"], a["city"]) for a in response.json()["addresses"]] == [("Other", "Oakland")]
+
+
+def test_put_without_addresses_clears_them(client, payload):
+    contact_id = client.post(BASE, json={**payload, "addresses": [HOME]}).json()["id"]
+    assert client.put(f"{BASE}/{contact_id}", json=payload).json()["addresses"] == []
+
+
+def test_patch_leaves_addresses_alone_when_omitted(client, payload):
+    contact_id = client.post(BASE, json={**payload, "addresses": [HOME]}).json()["id"]
+    response = client.patch(f"{BASE}/{contact_id}", json={"phone": "+1-000-000-0000"})
+    assert len(response.json()["addresses"]) == 1
+
+
+def test_address_rejects_unknown_type(client, payload):
+    response = client.post(BASE, json={**payload, "addresses": [{"type": "Vacation"}]})
+    assert response.status_code == 422

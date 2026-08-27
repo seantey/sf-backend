@@ -2,6 +2,27 @@ from datetime import datetime, timezone
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field, field_validator
 
+from app.models import AddressType
+
+
+class AddressBase(BaseModel):
+    """One postal address, labelled by what it is for."""
+
+    type: AddressType = Field(description="What this address is: Home, Work, or Other.", examples=["Home"])
+    street: str | None = Field(default=None, max_length=300, description="Street address, including unit or suite.", examples=["1 Market St, Suite 400"])
+    city: str | None = Field(default=None, max_length=120, description="City or locality.", examples=["San Francisco"])
+    state: str | None = Field(default=None, max_length=120, description="State, province, or region.", examples=["CA"])
+    postal_code: str | None = Field(default=None, max_length=20, description="Postal or ZIP code.", examples=["94105"])
+    country: str | None = Field(default=None, max_length=120, description="Country name.", examples=["USA"])
+
+
+class AddressRead(AddressBase):
+    """A stored address."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int = Field(description="Server-assigned identifier.", examples=[1])
+
 
 class ContactBase(BaseModel):
     """Fields shared by every contact request and response."""
@@ -69,6 +90,10 @@ class ContactBase(BaseModel):
         description="Free-form notes about the contact. No length limit.",
         examples=["Met at the SF hackathon."],
     )
+    addresses: list[AddressBase] = Field(
+        default_factory=list,
+        description="Postal addresses, each typed Home, Work, or Other. PUT replaces the whole list.",
+    )
 
 
 _FULL_EXAMPLE = {
@@ -134,6 +159,9 @@ class ContactUpdate(BaseModel):
     postal_code: str | None = Field(default=None, max_length=20, description="New postal code.")
     country: str | None = Field(default=None, max_length=120, description="New country.")
     notes: str | None = Field(default=None, description="New notes; replaces the existing text.")
+    addresses: list[AddressBase] | None = Field(
+        default=None, description="New address list; replaces every existing address when present."
+    )
 
 
 class ContactRead(ContactBase):
@@ -155,6 +183,7 @@ class ContactRead(ContactBase):
     )
 
     id: int = Field(description="Server-assigned identifier.", examples=[1])
+    addresses: list[AddressRead] = Field(description="Stored addresses, oldest first.")
     created_at: datetime = Field(
         description="UTC timestamp of when the contact was created.",
         examples=["2026-08-19T16:22:58.189507Z"],
